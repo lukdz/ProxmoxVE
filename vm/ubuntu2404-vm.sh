@@ -58,6 +58,7 @@ MACADDRESS="${TAB}🔗${TAB}${CL}"
 VLANTAG="${TAB}🏷️${TAB}${CL}"
 CREATING="${TAB}🚀${TAB}${CL}"
 ADVANCED="${TAB}🧩${TAB}${CL}"
+CLOUD="${TAB}☁️${TAB}${CL}"
 
 THIN="discard=on,ssd=1,"
 set -e
@@ -110,7 +111,7 @@ function cleanup() {
       post_update_to_api "failed" "$exit_code"
     fi
   fi
-  rm -rf $TEMP_DIR
+  rm -rf "$TEMP_DIR"
 }
 
 TEMP_DIR=$(mktemp -d)
@@ -209,6 +210,183 @@ function exit-script() {
   exit
 }
 
+function validate_cloud_init_user() {
+  local user="$1"
+  [[ "$user" =~ ^[a-z_][a-z0-9_-]*$ ]] && [ "${#user}" -le 32 ]
+}
+
+function validate_ssh_key_file() {
+  local key_file="$1"
+  local key
+  local key_count=0
+
+  if ! command -v ssh-keygen >/dev/null 2>&1; then
+    return 1
+  fi
+
+  while IFS= read -r key || [ -n "$key" ]; do
+    key="${key%$'\r'}"
+    [ -z "${key//[[:space:]]/}" ] && continue
+    [[ "$key" == \#* ]] && continue
+    if ! printf '%s\n' "$key" | ssh-keygen -lf - >/dev/null 2>&1; then
+      return 1
+    fi
+    key_count=$((key_count + 1))
+  done <"$key_file"
+
+  [ "$key_count" -gt 0 ]
+}
+
+function validate_ssh_key_url() {
+  local key_url="$1"
+  [[ "$key_url" =~ ^https://[^/[:space:]]+(/[^[:space:]]*)?$ ]] && [[ "$key_url" != *[[:space:]]* ]]
+}
+
+function normalize_ssh_key_file() {
+  local key_file="$1"
+  local normalized_file="$TEMP_DIR/cloud-init-sshkeys.normalized"
+  local key
+
+  : >"$normalized_file"
+  while IFS= read -r key || [ -n "$key" ]; do
+    key="${key%$'\r'}"
+    [ -z "${key//[[:space:]]/}" ] && continue
+    [[ "$key" == \#* ]] && continue
+    printf '%s\n' "$key" >>"$normalized_file"
+  done <"$key_file"
+  mv -f "$normalized_file" "$key_file"
+}
+
+function configure_cloud_init_credentials() {
+  local password_confirm
+  local key_source
+  local key_value
+  local key_file="$TEMP_DIR/cloud-init-sshkeys"
+
+  while true; do
+    CI_USER="ubuntu"
+    CI_PASSWORD=""
+    CI_SSH_KEY_FILE=""
+
+    while true; do
+      if CI_USER=$(whiptail --backtitle "Proxmox VE Helper Scripts" --inputbox \
+        "Set the Cloud-Init login username. A non-root user is recommended and receives passwordless sudo." \
+        10 70 "$CI_USER" --title "CLOUD-INIT USER" --cancel-button Exit-Script 3>&1 1>&2 2>&3); then
+        if ! validate_cloud_init_user "$CI_USER"; then
+          whiptail --backtitle "Proxmox VE Helper Scripts" --title "INVALID USERNAME" \
+            --msgbox "Use 1-32 lowercase letters, numbers, underscores, or hyphens. The first character must be a letter or underscore." 10 70
+          continue
+        fi
+        break
+      else
+        exit-script
+      fi
+    done
+
+    while true; do
+      if CI_PASSWORD=$(whiptail --backtitle "Proxmox VE Helper Scripts" --passwordbox \
+        "Set a password for ${CI_USER}. Leave blank when using an SSH key. If both are set, the password is for the Proxmox console only." \
+        10 70 --title "CLOUD-INIT PASSWORD" --cancel-button Exit-Script 3>&1 1>&2 2>&3); then
+        if [ -z "$CI_PASSWORD" ]; then
+          break
+        fi
+        if password_confirm=$(whiptail --backtitle "Proxmox VE Helper Scripts" --passwordbox \
+          "Confirm the Cloud-Init password." 8 70 --title "CONFIRM PASSWORD" --cancel-button Exit-Script 3>&1 1>&2 2>&3); then
+          if [ "$CI_PASSWORD" = "$password_confirm" ]; then
+            break
+          fi
+        else
+          exit-script
+        fi
+        whiptail --backtitle "Proxmox VE Helper Scripts" --title "PASSWORD MISMATCH" \
+          --msgbox "The passwords do not match. Please try again." 8 58
+      else
+        exit-script
+      fi
+    done
+
+    while true; do
+      if key_source=$(whiptail --backtitle "Proxmox VE Helper Scripts" --title "SSH KEY" --menu \
+        "Choose how to configure an SSH public key. SSH password authentication is disabled when a key is configured." \
+        14 76 3 \
+        "paste" "Paste an OpenSSH public key" \
+        "url" "Download keys from an HTTPS URL (e.g. https://github.com/user.keys)" \
+        "none" "Do not configure an SSH key" 3>&1 1>&2 2>&3); then
+        case "$key_source" in
+        paste)
+          if key_value=$(whiptail --backtitle "Proxmox VE Helper Scripts" --inputbox \
+            "Paste one OpenSSH public key exactly as provided (ssh-ed25519, ssh-rsa, etc.)." \
+            10 76 --title "PASTE SSH PUBLIC KEY" --cancel-button Exit-Script 3>&1 1>&2 2>&3); then
+            if [ -n "$key_value" ]; then
+              printf '%s\n' "$key_value" >"$key_file"
+              chmod 600 "$key_file"
+            else
+              rm -f "$key_file"
+            fi
+          else
+            exit-script
+          fi
+          ;;
+        url)
+          if key_value=$(whiptail --backtitle "Proxmox VE Helper Scripts" --inputbox \
+            "Enter an HTTPS URL returning one or more OpenSSH public keys." \
+            10 76 --title "SSH KEY URL" --cancel-button Exit-Script 3>&1 1>&2 2>&3); then
+            if ! validate_ssh_key_url "$key_value"; then
+              whiptail --backtitle "Proxmox VE Helper Scripts" --title "INVALID URL" \
+                --msgbox "Only HTTPS URLs are supported for SSH key downloads." 8 58
+              continue
+            fi
+            rm -f "$key_file"
+            if ! curl -f#L --proto '=https' --proto-redir '=https' --max-time 30 --max-filesize 1048576 \
+              --retry 2 -o "$key_file" "$key_value"; then
+              rm -f "$key_file"
+              whiptail --backtitle "Proxmox VE Helper Scripts" --title "SSH KEY DOWNLOAD FAILED" \
+                --msgbox "Unable to download SSH keys from:\n\n$key_value" 10 70
+              continue
+            fi
+            chmod 600 "$key_file"
+          else
+            exit-script
+          fi
+          ;;
+        none)
+          rm -f "$key_file"
+          ;;
+        esac
+
+        if [ -f "$key_file" ]; then
+          if validate_ssh_key_file "$key_file"; then
+            normalize_ssh_key_file "$key_file"
+            CI_SSH_KEY_FILE="$key_file"
+            break
+          fi
+          rm -f "$key_file"
+          whiptail --backtitle "Proxmox VE Helper Scripts" --title "INVALID SSH KEY" \
+            --msgbox "The input did not contain a valid OpenSSH public key. Please check the key or URL and try again." 10 70
+        else
+          CI_SSH_KEY_FILE=""
+          break
+        fi
+      else
+        exit-script
+      fi
+    done
+
+    if [ -n "$CI_PASSWORD" ] || [ -n "$CI_SSH_KEY_FILE" ]; then
+      break
+    fi
+
+    whiptail --backtitle "Proxmox VE Helper Scripts" --title "LOGIN REQUIRED" \
+      --msgbox "Configure a password or an SSH public key so the VM can be accessed after its first boot." 10 70
+  done
+
+  if [ -n "$CI_SSH_KEY_FILE" ]; then
+    echo -e "${CLOUD}${BOLD}${DGN}Cloud-Init access: ${BGN}${CI_USER} with SSH key${CL}"
+  else
+    echo -e "${CLOUD}${BOLD}${DGN}Cloud-Init access: ${BGN}${CI_USER} with password${CL}"
+  fi
+}
+
 function default_settings() {
   VMID=$(get_valid_nextid)
   FORMAT=",efitype=4m"
@@ -225,6 +403,7 @@ function default_settings() {
   MTU=""
   START_VM="yes"
   METHOD="default"
+  configure_cloud_init_credentials
   echo -e "${CONTAINERID}${BOLD}${DGN}Virtual Machine ID: ${BGN}${VMID}${CL}"
   echo -e "${CONTAINERTYPE}${BOLD}${DGN}Machine Type: ${BGN}i440fx${CL}"
   echo -e "${DISKSIZE}${BOLD}${DGN}Disk Size: ${BGN}${DISK_SIZE}${CL}"
@@ -431,6 +610,8 @@ function advanced_settings() {
     fi
   done
 
+  configure_cloud_init_credentials
+
   if (whiptail --backtitle "Proxmox VE Helper Scripts" --title "START VIRTUAL MACHINE" --yesno "Start VM when completed?" 10 58); then
     echo -e "${GATEWAY}${BOLD}${DGN}Start VM when completed: ${BGN}yes${CL}"
     START_VM="yes"
@@ -539,8 +720,17 @@ qm set $VMID \
   -efidisk0 ${DISK0_REF}${FORMAT} \
   -scsi0 ${DISK1_REF},${DISK_CACHE}${THIN}size=${DISK_SIZE} \
   -ide2 ${STORAGE}:cloudinit \
+  -ciuser "$CI_USER" \
+  -ciupgrade 1 \
+  -ipconfig0 ip=dhcp \
   -boot order=scsi0 \
   -serial0 socket >/dev/null
+if [ -n "$CI_PASSWORD" ]; then
+  qm set "$VMID" -cipassword "$CI_PASSWORD" >/dev/null
+fi
+if [ -n "$CI_SSH_KEY_FILE" ]; then
+  qm set "$VMID" -sshkeys "$CI_SSH_KEY_FILE" >/dev/null
+fi
 DESCRIPTION=$(
   cat <<EOF
 <div align='center'>
@@ -588,5 +778,7 @@ if [ "$START_VM" == "yes" ]; then
 fi
 post_update_to_api "done" "none"
 msg_ok "Completed successfully!\n"
-echo -e "Setup Cloud-Init before starting \n
+echo -e "Cloud-Init configured for user ${CI_USER}.\n
+SSH key authentication: $([ -n "$CI_SSH_KEY_FILE" ] && echo enabled || echo not configured)\n
+Password authentication: $([ -n "$CI_PASSWORD" ] && echo configured || echo not configured)\n
 More info at https://github.com/community-scripts/ProxmoxVE/discussions/272 \n"

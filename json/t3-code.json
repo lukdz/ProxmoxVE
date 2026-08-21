@@ -1,0 +1,51 @@
+{
+  "name": "T3 Code",
+  "slug": "t3-code",
+  "categories": [20],
+  "date_created": "2026-08-21",
+  "type": "ct",
+  "updateable": true,
+  "privileged": false,
+  "interface_port": 3773,
+  "documentation": "https://github.com/pingdotgg/t3code/blob/main/docs/user/install.md",
+  "website": "https://t3.codes/",
+  "repository": "https://github.com/pingdotgg/t3code",
+  "logo": "https://t3.codes/icon.webp",
+  "description": "T3 Code is an open-source control surface for coding agents. It provides a web interface for orchestrating local Claude Code, Codex, Cursor, Grok Build and OpenCode sessions from remote devices.",
+  "install_methods": [
+    {
+      "type": "default",
+      "script": "ct/t3-code.sh",
+      "config_path": "",
+      "resources": {
+        "cpu": 4,
+        "ram": 4096,
+        "hdd": 20,
+        "os": "Debian",
+        "version": "13"
+      }
+    }
+  ],
+  "default_credentials": {
+    "username": null,
+    "password": null
+  },
+  "notes": [
+    {
+      "text": "The service runs as the dedicated non-root t3 user. Add projects and install/authenticate provider CLIs as that user; this script does not copy credentials or install provider CLIs.",
+      "type": "info"
+    },
+    {
+      "text": "After installation, run su - t3 and then npx --yes t3@latest pair to create a one-time pairing link. Treat pairing links as passwords.",
+      "type": "info"
+    },
+    {
+      "text": "The service listens on all interfaces at TCP port 3773 over HTTP. Restrict access to a trusted network or place it behind HTTPS before exposing it beyond your private network.",
+      "type": "warning"
+    },
+    {
+      "text": "The arm64 path has not been tested yet. Native node-pty dependencies may require a successful build on the target architecture.",
+      "type": "warning"
+    }
+  ]
+}

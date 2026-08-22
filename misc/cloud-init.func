@@ -50,6 +50,47 @@ function _ci_ssh_extract_keys_from_file() {
   grep -E '^(ssh-(rsa|ed25519|dss|ecdsa)|ecdsa-sha2-)' "$file" 2>/dev/null || true
 }
 
+function _ci_validate_ssh_key_file() {
+  local key_file="$1"
+  local key
+  local key_count=0
+
+  command -v ssh-keygen >/dev/null 2>&1 || return 1
+
+  while IFS= read -r key || [[ -n "$key" ]]; do
+    key="${key%$'\r'}"
+    [[ -z "${key//[[:space:]]/}" || "$key" == \#* ]] && continue
+    printf '%s\n' "$key" | ssh-keygen -lf - >/dev/null 2>&1 || return 1
+    key_count=$((key_count + 1))
+  done <"$key_file"
+
+  [[ "$key_count" -gt 0 ]]
+}
+
+function _ci_validate_ssh_key_url() {
+  local key_url="$1"
+  [[ "$key_url" =~ ^https://[^/[:space:]]+(/[^[:space:]]*)?$ ]] && [[ "$key_url" != *[[:space:]]* ]]
+}
+
+function _ci_normalize_ssh_key_file() {
+  local key_file="$1"
+  local normalized_file="${key_file}.normalized"
+  local key
+
+  : >"$normalized_file"
+  while IFS= read -r key || [[ -n "$key" ]]; do
+    key="${key%$'\r'}"
+    [[ -z "${key//[[:space:]]/}" || "$key" == \#* ]] && continue
+    printf '%s\n' "$key" >>"$normalized_file"
+  done <"$key_file"
+  mv -f "$normalized_file" "$key_file"
+}
+
+function _ci_validate_username() {
+  local user="$1"
+  [[ "$user" =~ ^[a-z_][a-z0-9_-]*$ ]] && [[ "${#user}" -le 32 ]]
+}
+
 # ------------------------------------------------------------------------------
 # _ci_ssh_discover_files - Scans standard paths for SSH keys
 # ------------------------------------------------------------------------------
@@ -72,7 +113,7 @@ function _ci_ssh_build_choices() {
   local -a files=("$@")
   CI_SSH_CHOICES=()
   CI_SSH_COUNT=0
-  CI_SSH_MAPFILE="$(mktemp)"
+  CI_SSH_MAPFILE="$(mktemp "${CLOUDINIT_TMP_DIR:-/tmp}/cloud-init-ssh-map.XXXXXX")"
   local id key typ fp cmt base
 
   for f in "${files[@]}"; do
@@ -121,27 +162,35 @@ function configure_cloudinit_ssh_keys() {
   local ssh_key_mode
 
   # Create temp file for selected keys
-  CLOUDINIT_SSH_KEYS_TEMP="$(mktemp)"
+  CLOUDINIT_SSH_KEYS_TEMP="$(mktemp "${CLOUDINIT_TMP_DIR:-/tmp}/cloud-init-sshkeys.XXXXXX")"
   : >"$CLOUDINIT_SSH_KEYS_TEMP"
 
   # Discover keys and build choices
-  IFS=$'\0' read -r -d '' -a _def_files < <(_ci_ssh_discover_files && printf '\0')
+  mapfile -d '' -t _def_files < <(_ci_ssh_discover_files)
   _ci_ssh_build_choices "${_def_files[@]}"
   local default_key_count="$CI_SSH_COUNT"
 
   if [[ "$default_key_count" -gt 0 ]]; then
     ssh_key_mode=$(whiptail --backtitle "$backtitle" --title "SSH KEY SOURCE" --menu \
-      "Provision SSH keys for Cloud-Init VM:" 14 72 4 \
-      "found" "Select from detected keys (${default_key_count})" \
+      "Provision SSH keys for Cloud-Init VM:" 16 76 5 \
+      "found" "Select from Proxmox host keys (${default_key_count})" \
       "manual" "Paste a single public key" \
+      "url" "Download keys from an HTTPS URL (e.g. https://github.com/user.keys)" \
       "folder" "Scan another folder (path or glob)" \
-      "none" "No SSH keys (password auth only)" 3>&1 1>&2 2>&3) || return 1
+      "none" "No SSH keys (password auth only)" 3>&1 1>&2 2>&3) || {
+        rm -f "$CLOUDINIT_SSH_KEYS_TEMP" "$CI_SSH_MAPFILE" 2>/dev/null
+        return 1
+      }
   else
     ssh_key_mode=$(whiptail --backtitle "$backtitle" --title "SSH KEY SOURCE" --menu \
-      "No host keys detected. Choose:" 12 72 3 \
+      "No host keys detected. Choose:" 14 76 4 \
       "manual" "Paste a single public key" \
+      "url" "Download keys from an HTTPS URL (e.g. https://github.com/user.keys)" \
       "folder" "Scan another folder (path or glob)" \
-      "none" "No SSH keys (password auth only)" 3>&1 1>&2 2>&3) || return 1
+      "none" "No SSH keys (password auth only)" 3>&1 1>&2 2>&3) || {
+        rm -f "$CLOUDINIT_SSH_KEYS_TEMP" "$CI_SSH_MAPFILE" 2>/dev/null
+        return 1
+      }
   fi
 
   case "$ssh_key_mode" in
@@ -149,7 +198,10 @@ function configure_cloudinit_ssh_keys() {
     # Show checklist with individual keys
     local selection
     selection=$(whiptail --backtitle "$backtitle" --title "SELECT SSH KEYS" \
-      --checklist "Select one or more keys to import:" 20 140 10 "${CI_SSH_CHOICES[@]}" 3>&1 1>&2 2>&3) || return 1
+      --checklist "Select one or more keys to import:" 20 140 10 "${CI_SSH_CHOICES[@]}" 3>&1 1>&2 2>&3) || {
+        rm -f "$CLOUDINIT_SSH_KEYS_TEMP" "$CI_SSH_MAPFILE" 2>/dev/null
+        return 1
+      }
 
     for tag in $selection; do
       tag="${tag%\"}"
@@ -165,9 +217,19 @@ function configure_cloudinit_ssh_keys() {
   manual)
     local pubkey
     pubkey=$(whiptail --backtitle "$backtitle" --title "PASTE SSH PUBLIC KEY" \
-      --inputbox "Paste your SSH public key (ssh-rsa, ssh-ed25519, etc.):" 10 76 3>&1 1>&2 2>&3) || return 1
+      --inputbox "Paste your SSH public key (ssh-rsa, ssh-ed25519, etc.):" 10 76 3>&1 1>&2 2>&3) || {
+        rm -f "$CLOUDINIT_SSH_KEYS_TEMP" "$CI_SSH_MAPFILE" 2>/dev/null
+        return 1
+      }
     if [[ -n "$pubkey" ]]; then
-      echo "$pubkey" >"$CLOUDINIT_SSH_KEYS_TEMP"
+      printf '%s\n' "$pubkey" >"$CLOUDINIT_SSH_KEYS_TEMP"
+      if ! _ci_validate_ssh_key_file "$CLOUDINIT_SSH_KEYS_TEMP"; then
+        whiptail --backtitle "$backtitle" --title "INVALID SSH KEY" \
+          --msgbox "The input did not contain a valid OpenSSH public key." 8 60
+        rm -f "$CLOUDINIT_SSH_KEYS_TEMP"
+        rm -f "$CI_SSH_MAPFILE" 2>/dev/null
+        return 65
+      fi
       echo -e "${ROOTSSH:-  🔑  }${BOLD}${DGN}SSH Keys: ${BGN}1 key added manually${CL}"
     else
       echo -e "${ROOTSSH:-  🔑  }${BOLD}${DGN}SSH Keys: ${BGN}none (empty input)${CL}"
@@ -176,10 +238,43 @@ function configure_cloudinit_ssh_keys() {
       return 0
     fi
     ;;
+  url)
+    local key_url
+    key_url=$(whiptail --backtitle "$backtitle" --title "SSH KEY URL" \
+      --inputbox "Enter an HTTPS URL returning one or more OpenSSH public keys." \
+      10 76 3>&1 1>&2 2>&3) || {
+        rm -f "$CLOUDINIT_SSH_KEYS_TEMP" "$CI_SSH_MAPFILE" 2>/dev/null
+        return 1
+      }
+    if ! _ci_validate_ssh_key_url "$key_url"; then
+      whiptail --backtitle "$backtitle" --title "INVALID URL" \
+        --msgbox "Only HTTPS URLs are supported for SSH key downloads." 8 58
+      rm -f "$CLOUDINIT_SSH_KEYS_TEMP" "$CI_SSH_MAPFILE" 2>/dev/null
+      return 65
+    fi
+    if ! curl -f#L --proto '=https' --proto-redir '=https' --max-time 30 \
+      --max-filesize 1048576 --retry 2 -o "$CLOUDINIT_SSH_KEYS_TEMP" "$key_url"; then
+      whiptail --backtitle "$backtitle" --title "SSH KEY DOWNLOAD FAILED" \
+        --msgbox "Unable to download SSH keys from:\n\n$key_url" 10 70
+      rm -f "$CLOUDINIT_SSH_KEYS_TEMP" "$CI_SSH_MAPFILE" 2>/dev/null
+      return 65
+    fi
+    if ! _ci_validate_ssh_key_file "$CLOUDINIT_SSH_KEYS_TEMP"; then
+      whiptail --backtitle "$backtitle" --title "INVALID SSH KEY" \
+        --msgbox "The URL did not return valid OpenSSH public keys." 8 60
+      rm -f "$CLOUDINIT_SSH_KEYS_TEMP" "$CI_SSH_MAPFILE" 2>/dev/null
+      return 65
+    fi
+    _ci_normalize_ssh_key_file "$CLOUDINIT_SSH_KEYS_TEMP"
+    echo -e "${ROOTSSH:-  🔑  }${BOLD}${DGN}SSH Keys: ${BGN}downloaded from URL${CL}"
+    ;;
   folder)
     local glob_path
     glob_path=$(whiptail --backtitle "$backtitle" --title "SCAN FOLDER/GLOB" \
-      --inputbox "Enter a folder or glob to scan (e.g. /root/.ssh/*.pub):" 10 72 3>&1 1>&2 2>&3) || return 1
+      --inputbox "Enter a folder or glob to scan (e.g. /root/.ssh/*.pub):" 10 72 3>&1 1>&2 2>&3) || {
+        rm -f "$CLOUDINIT_SSH_KEYS_TEMP" "$CI_SSH_MAPFILE" 2>/dev/null
+        return 1
+      }
     if [[ -n "$glob_path" ]]; then
       shopt -s nullglob
       local -a _scan_files=($glob_path)
@@ -189,7 +284,10 @@ function configure_cloudinit_ssh_keys() {
         if [[ "$CI_SSH_COUNT" -gt 0 ]]; then
           local folder_selection
           folder_selection=$(whiptail --backtitle "$backtitle" --title "SELECT FOLDER KEYS" \
-            --checklist "Select key(s) to import:" 20 140 10 "${CI_SSH_CHOICES[@]}" 3>&1 1>&2 2>&3) || return 1
+            --checklist "Select key(s) to import:" 20 140 10 "${CI_SSH_CHOICES[@]}" 3>&1 1>&2 2>&3) || {
+              rm -f "$CLOUDINIT_SSH_KEYS_TEMP" "$CI_SSH_MAPFILE" 2>/dev/null
+              return 1
+            }
           for tag in $folder_selection; do
             tag="${tag%\"}"
             tag="${tag#\"}"
@@ -221,6 +319,13 @@ function configure_cloudinit_ssh_keys() {
 
   # Set the variable for setup_cloud_init to use
   if [[ -s "$CLOUDINIT_SSH_KEYS_TEMP" ]]; then
+    if ! _ci_validate_ssh_key_file "$CLOUDINIT_SSH_KEYS_TEMP"; then
+      whiptail --backtitle "$backtitle" --title "INVALID SSH KEY" \
+        --msgbox "The selected input did not contain valid OpenSSH public keys." 8 70
+      rm -f "$CLOUDINIT_SSH_KEYS_TEMP" "$CI_SSH_MAPFILE" 2>/dev/null
+      return 65
+    fi
+    _ci_normalize_ssh_key_file "$CLOUDINIT_SSH_KEYS_TEMP"
     CLOUDINIT_SSH_KEYS="$CLOUDINIT_SSH_KEYS_TEMP"
   else
     CLOUDINIT_SSH_KEYS=""
@@ -228,6 +333,73 @@ function configure_cloudinit_ssh_keys() {
   fi
 
   return 0
+}
+
+function configure_cloud_init_credentials() {
+  local password_confirm
+
+  while true; do
+    if CLOUDINIT_PASSWORD=$(whiptail --backtitle "Proxmox VE Helper Scripts" --passwordbox \
+      "Set a password for ${CLOUDINIT_USER}. Leave blank when using an SSH key." \
+      10 70 --title "CLOUD-INIT PASSWORD" --cancel-button Exit-Script 3>&1 1>&2 2>&3); then
+      if [ -n "$CLOUDINIT_PASSWORD" ]; then
+        if password_confirm=$(whiptail --backtitle "Proxmox VE Helper Scripts" --passwordbox \
+          "Confirm the Cloud-Init password." 8 70 --title "CONFIRM PASSWORD" --cancel-button Exit-Script 3>&1 1>&2 2>&3); then
+          if [ "$CLOUDINIT_PASSWORD" != "$password_confirm" ]; then
+            whiptail --backtitle "Proxmox VE Helper Scripts" --title "PASSWORD MISMATCH" \
+              --msgbox "The passwords do not match. Please try again." 8 58
+            continue
+          fi
+        else
+          return 1
+        fi
+      fi
+    else
+      return 1
+    fi
+
+    CLOUDINIT_SSH_KEYS=""
+    local key_status
+    if configure_cloudinit_ssh_keys; then
+      key_status=0
+    else
+      key_status="$?"
+    fi
+    if [ "$key_status" -ne 0 ]; then
+      if [ "$key_status" -eq 65 ]; then
+        continue
+      fi
+      return "$key_status"
+    fi
+
+    if [ -n "$CLOUDINIT_PASSWORD" ] || [ -n "${CLOUDINIT_SSH_KEYS:-}" ]; then
+      break
+    fi
+
+    whiptail --backtitle "Proxmox VE Helper Scripts" --title "LOGIN REQUIRED" \
+      --msgbox "Configure a password or an SSH public key so the VM can be accessed after its first boot." 10 70
+  done
+
+  export CLOUDINIT_PASSWORD
+  return 0
+}
+
+function cleanup_cloudinit_ssh_keys() {
+  if [ -n "${CLOUDINIT_SSH_KEYS_TEMP:-}" ]; then
+    rm -f "$CLOUDINIT_SSH_KEYS_TEMP" 2>/dev/null || true
+  fi
+  if [ -n "${CI_SSH_MAPFILE:-}" ]; then
+    rm -f "$CI_SSH_MAPFILE" 2>/dev/null || true
+  fi
+  unset CLOUDINIT_SSH_KEYS_TEMP CI_SSH_MAPFILE
+}
+
+function cleanup_cloud_init_temp_files() {
+  cleanup_cloudinit_ssh_keys
+  if [ -n "${CLOUDINIT_CRED_FILE:-}" ]; then
+    rm -f "$CLOUDINIT_CRED_FILE" 2>/dev/null || true
+    unset CLOUDINIT_CRED_FILE
+  fi
 }
 
 # ==============================================================================
@@ -295,6 +467,7 @@ function validate_ip() {
 #   $7 - Static IP (optional, format: 192.168.1.100/24)
 #   $8 - Gateway (optional)
 #   $9 - Nameservers (optional, default: 1.1.1.1 8.8.8.8)
+#   $10 - Password (optional, generated when omitted; pass an empty value for key-only access)
 #
 # Returns: 0 on success, 1 on failure
 # Exports: CLOUDINIT_USER, CLOUDINIT_PASSWORD, CLOUDINIT_CRED_FILE
@@ -309,6 +482,8 @@ function setup_cloud_init() {
   local static_ip="${7:-}"
   local gateway="${8:-}"
   local nameservers="${9:-$CLOUDINIT_DNS_SERVERS}"
+  local cipassword
+  local network_summary
 
   # Skip if not enabled
   if [ "$enable" != "yes" ]; then
@@ -337,21 +512,39 @@ function setup_cloud_init() {
   # Set user
   qm set "$vmid" --ciuser "$ciuser" >/dev/null
 
-  # Generate and set secure random password
-  local cipassword=$(openssl rand -base64 16)
-  qm set "$vmid" --cipassword "$cipassword" >/dev/null
+  # Generate a password for existing callers, or use the explicit password.
+  if [ "$#" -ge 10 ]; then
+    cipassword="${10}"
+  else
+    cipassword=$(openssl rand -base64 16)
+  fi
+  if [ -n "$cipassword" ]; then
+    qm set "$vmid" --cipassword "$cipassword" >/dev/null
+  fi
 
   # Add SSH keys only if explicitly provided (not auto-imported from host)
-  if [ -n "${CLOUDINIT_SSH_KEYS:-}" ] && [ -f "$CLOUDINIT_SSH_KEYS" ]; then
-    qm set "$vmid" --sshkeys "$CLOUDINIT_SSH_KEYS" >/dev/null 2>&1 || true
-    _ci_msg_info "SSH keys imported from: $CLOUDINIT_SSH_KEYS"
+  local selected_key_file="${CLOUDINIT_SSH_KEYS:-}"
+  if [ -n "$selected_key_file" ] && [ -f "$selected_key_file" ]; then
+    qm set "$vmid" --sshkeys "$selected_key_file" >/dev/null
+    _ci_msg_info "SSH keys imported from: $selected_key_file"
+    if [ "${CLOUDINIT_SSH_KEYS_TEMP:-}" = "$selected_key_file" ]; then
+      cleanup_cloudinit_ssh_keys
+    fi
+  else
+    CLOUDINIT_SSH_KEYS=""
   fi
 
   # Configure network
-  if [ "$network_mode" = "static" ] && [ -n "$static_ip" ] && [ -n "$gateway" ]; then
-    qm set "$vmid" --ipconfig0 "ip=${static_ip},gw=${gateway}" >/dev/null
+  if [ "$network_mode" = "static" ] && [ -n "$static_ip" ]; then
+    if [ -n "$gateway" ]; then
+      qm set "$vmid" --ipconfig0 "ip=${static_ip},gw=${gateway}" >/dev/null
+    else
+      qm set "$vmid" --ipconfig0 "ip=${static_ip}" >/dev/null
+    fi
+    network_summary="static (IP: ${static_ip}${gateway:+, GW: ${gateway}})"
   else
     qm set "$vmid" --ipconfig0 "ip=dhcp" >/dev/null
+    network_summary="DHCP"
   fi
 
   # Set DNS servers
@@ -364,7 +557,7 @@ function setup_cloud_init() {
   qm set "$vmid" --ciupgrade 1 >/dev/null 2>&1 || true
 
   # Save credentials to file (with restrictive permissions)
-  local cred_file="/tmp/${hostname}-${vmid}-cloud-init-credentials.txt"
+  local cred_file="${CLOUDINIT_TMP_DIR:-/tmp}/${hostname}-${vmid}-cloud-init-credentials.txt"
   umask 077
   cat >"$cred_file" <<EOF
 ╔══════════════════════════════════════════════════════════════════╗
@@ -378,9 +571,9 @@ Hostname: ${hostname}
 Created:  $(date)
 
 Username: ${ciuser}
-Password: ${cipassword}
+Password: ${cipassword:-not configured (SSH key authentication)}
 
-Network:  ${network_mode}$([ "$network_mode" = "static" ] && echo " (IP: ${static_ip}, GW: ${gateway})" || echo " (DHCP)")
+Network:  ${network_summary}
 DNS:      ${nameservers}
 
 ────────────────────────────────────────
@@ -425,9 +618,15 @@ EOF
 #   - CLOUDINIT_IP (if static)
 #   - CLOUDINIT_GW (if static)
 #   - CLOUDINIT_DNS
+#   - CLOUDINIT_PASSWORD (when required is yes)
+#   - CLOUDINIT_SSH_KEYS (when required is yes)
+#
+# The second argument is optional. Pass "yes" to require Cloud-Init and collect
+# login credentials instead of showing the enable/disable prompt.
 # ------------------------------------------------------------------------------
 function configure_cloud_init_interactive() {
   local default_user="${1:-root}"
+  local required="${2:-no}"
 
   # Check if whiptail is available
   if ! command -v whiptail >/dev/null 2>&1; then
@@ -436,22 +635,33 @@ function configure_cloud_init_interactive() {
     return 127
   fi
 
-  # Ask if user wants to enable Cloud-Init
-  if ! (whiptail --backtitle "Proxmox VE Helper Scripts" --title "CLOUD-INIT" \
+  if [ "$required" = "yes" ]; then
+    export CLOUDINIT_ENABLE="yes"
+  elif ! (whiptail --backtitle "Proxmox VE Helper Scripts" --title "CLOUD-INIT" \
     --yesno "Enable Cloud-Init for VM configuration?\n\nCloud-Init allows automatic configuration of:\n• User accounts and passwords\n• SSH keys\n• Network settings (DHCP/Static)\n• DNS configuration\n\nYou can also configure these settings later in Proxmox UI." 16 68); then
     export CLOUDINIT_ENABLE="no"
     return 0
+  else
+    export CLOUDINIT_ENABLE="yes"
   fi
-
-  export CLOUDINIT_ENABLE="yes"
 
   # Username
-  if CLOUDINIT_USER=$(whiptail --backtitle "Proxmox VE Helper Scripts" --inputbox \
-    "Cloud-Init Username" 8 58 "$default_user" --title "USERNAME" 3>&1 1>&2 2>&3); then
-    export CLOUDINIT_USER="${CLOUDINIT_USER:-$default_user}"
-  else
-    export CLOUDINIT_USER="$default_user"
-  fi
+  while true; do
+    if CLOUDINIT_USER=$(whiptail --backtitle "Proxmox VE Helper Scripts" --inputbox \
+      "Set the Cloud-Init login username. A non-root user is recommended and will receive passwordless sudo." \
+      10 70 "$default_user" --title "CLOUD-INIT USER" --cancel-button Exit-Script 3>&1 1>&2 2>&3); then
+      CLOUDINIT_USER="${CLOUDINIT_USER:-$default_user}"
+      if ! _ci_validate_username "$CLOUDINIT_USER"; then
+        whiptail --backtitle "Proxmox VE Helper Scripts" --title "INVALID USERNAME" \
+          --msgbox "Use 1-32 lowercase letters, numbers, underscores, or hyphens. The first character must be a letter or underscore." 10 70
+        continue
+      fi
+      export CLOUDINIT_USER
+      break
+    else
+      return 1
+    fi
+  done
 
   # Network configuration
   if (whiptail --backtitle "Proxmox VE Helper Scripts" --title "NETWORK MODE" \
@@ -505,6 +715,10 @@ function configure_cloud_init_interactive() {
     export CLOUDINIT_DNS="${CLOUDINIT_DNS:-1.1.1.1 8.8.8.8}"
   else
     export CLOUDINIT_DNS="1.1.1.1 8.8.8.8"
+  fi
+
+  if [ "$required" = "yes" ]; then
+    configure_cloud_init_credentials || return 1
   fi
 
   return 0
@@ -647,6 +861,9 @@ function wait_for_cloud_init() {
 # Export all functions for use in other scripts
 
 export -f setup_cloud_init 2>/dev/null || true
+export -f configure_cloud_init_credentials 2>/dev/null || true
+export -f cleanup_cloudinit_ssh_keys 2>/dev/null || true
+export -f cleanup_cloud_init_temp_files 2>/dev/null || true
 export -f configure_cloud_init_interactive 2>/dev/null || true
 export -f display_cloud_init_info 2>/dev/null || true
 export -f cleanup_cloud_init_credentials 2>/dev/null || true

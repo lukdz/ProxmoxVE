@@ -269,7 +269,9 @@ install_source_control_tools() {
 show_provider_login_commands() {
   [[ "${t3_providers_installed:-0}" -eq 1 ]] || return 0
 
-  msg_info "Provider Authentication"
+  stop_spinner
+  echo
+  echo -e "${INFO}${BOLD}${DGN}Provider Authentication${CL}"
   echo
   echo -e "${TAB}${YW}Selected provider CLIs are installed but not authenticated. Run these commands from the Proxmox host:${CL}"
   echo -e "${TAB}${YW}After authentication, enable Cursor, Grok and OpenCode in T3 Code Settings if you selected them.${CL}"
@@ -285,7 +287,9 @@ show_provider_login_commands() {
 show_source_control_login_commands() {
   [[ "${t3_source_control_configured:-0}" -eq 1 ]] || return 0
 
-  msg_info "Source Control Authentication"
+  stop_spinner
+  echo
+  echo -e "${INFO}${BOLD}${DGN}Source Control Authentication${CL}"
   echo
   echo -e "${TAB}${YW}Selected source-control integrations are installed or prepared but not authenticated. Run these commands from the Proxmox host:${CL}"
   echo -e "${TAB}${YW}Authentication is performed as the t3 user and is never done automatically.${CL}"

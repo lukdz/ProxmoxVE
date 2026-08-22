@@ -23,7 +23,7 @@ var_t3_source_control="${var_t3_source_control:-none}"
 var_t3_source_control="${var_t3_source_control//[[:space:]]/}"
 
 msg_info "Installing Dependencies"
-$STD apt install -y \
+$STD apt-get install -y \
   build-essential \
   python3 \
   dbus \
@@ -33,7 +33,7 @@ msg_ok "Installed Dependencies"
 
 if [[ ",${var_t3_version_control,,}," == *,git,* ]]; then
   msg_info "Installing Git"
-  $STD apt install -y git
+  $STD apt-get install -y git
   msg_ok "Installed Git"
 fi
 
@@ -137,7 +137,7 @@ install_selected_providers() {
       "https://downloads.claude.ai/claude-code/apt/stable" \
       "stable" "main"
     msg_info "Installing Claude Code CLI"
-    $STD apt install -y claude-code
+    $STD apt-get install -y claude-code
     msg_ok "Installed Claude Code CLI"
     t3_providers_installed=1
   fi
@@ -189,7 +189,7 @@ install_gitlab_cli() {
     return 1
   fi
   if ! $STD dpkg -i "$package_file"; then
-    $STD apt install -f -y
+    $STD apt-get install -f -y
   fi
   rm -f "$package_file"
   command -v glab >/dev/null 2>&1 || {
@@ -235,7 +235,7 @@ install_source_control_tools() {
       "https://cli.github.com/packages" \
       "stable" "main" "$(dpkg --print-architecture)"
     msg_info "Installing GitHub CLI"
-    $STD apt install -y gh
+    $STD apt-get install -y gh
     msg_ok "Installed GitHub CLI"
     t3_source_control_configured=1
   fi
@@ -247,11 +247,11 @@ install_source_control_tools() {
 
   if source_control_selected azure; then
     setup_deb822_repo "azure-cli" \
-      "https://packages.microsoft.com/keys/microsoft-2025.asc" \
+      "https://packages.microsoft.com/keys/microsoft.asc" \
       "https://packages.microsoft.com/repos/azure-cli/" \
       "bookworm" "main" "$(dpkg --print-architecture)"
     msg_info "Installing Azure CLI"
-    $STD apt install -y azure-cli
+    $STD apt-get install -y azure-cli
     msg_ok "Installed Azure CLI"
     msg_info "Installing Azure DevOps extension"
     t3_exec /usr/bin/az extension add --name azure-devops

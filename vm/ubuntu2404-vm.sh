@@ -251,6 +251,7 @@ function default_settings() {
 function advanced_settings() {
   METHOD="advanced"
   DISK_SIZE="${DISK_SIZE:-7G}"
+  CLOUDINIT_ENABLE="no"
   [ -z "${VMID:-}" ] && VMID=$(get_valid_nextid)
   while true; do
     if VMID=$(whiptail --backtitle "Proxmox VE Helper Scripts" --inputbox "Set Virtual Machine ID" 8 58 $VMID --title "VIRTUAL MACHINE ID" --cancel-button Exit-Script 3>&1 1>&2 2>&3); then
@@ -441,9 +442,11 @@ function advanced_settings() {
 
   if (whiptail --backtitle "Proxmox VE Helper Scripts" --title "CLOUD-INIT" \
     --yesno "Configure the VM with Cloud-Init?" 10 58); then
+    CLOUDINIT_ENABLE="yes"
+    echo -e "${CLOUD}${BOLD}${DGN}Cloud-Init: ${BGN}yes${CL}"
     configure_cloud_init_interactive "ubuntu" "yes" || exit-script
   else
-    exit-script
+    echo -e "${CLOUD}${BOLD}${DGN}Cloud-Init: ${BGN}no${CL}"
   fi
 
   if (whiptail --backtitle "Proxmox VE Helper Scripts" --title "START VIRTUAL MACHINE" --yesno "Start VM when completed?" 10 58); then
@@ -518,19 +521,32 @@ echo -en "\e[1A\e[0K"
 FILE=$(basename $URL)
 msg_ok "Downloaded ${CL}${BL}${FILE}${CL}"
 
-if ! command -v virt-customize >/dev/null 2>&1; then
-  msg_info "Installing libguestfs-tools"
-  apt-get update >/dev/null 2>&1
-  apt-get install -y libguestfs-tools >/dev/null 2>&1
-  msg_ok "Installed libguestfs-tools"
-fi
+if [ "$CLOUDINIT_ENABLE" = "yes" ]; then
+  if ! command -v virt-customize >/dev/null 2>&1; then
+    msg_info "Installing libguestfs-tools"
+    apt-get update >/dev/null 2>&1
+    apt-get install -y libguestfs-tools >/dev/null 2>&1
+    msg_ok "Installed libguestfs-tools"
+  fi
 
-msg_info "Configuring SSH password authentication"
-configure_cloud_init_image_ssh_pwauth "$FILE" "${CLOUDINIT_SSH_PWAUTH:-yes}"
-if [ "${CLOUDINIT_SSH_PWAUTH:-yes}" = "yes" ]; then
-  msg_ok "Configured SSH authentication: password enabled"
+  msg_info "Configuring SSH password authentication"
+  configure_cloud_init_image_ssh_pwauth "$FILE" "${CLOUDINIT_SSH_PWAUTH:-yes}"
+  if [ "${CLOUDINIT_SSH_PWAUTH:-yes}" = "yes" ]; then
+    msg_ok "Configured SSH authentication: password enabled"
+  else
+    msg_ok "Configured SSH authentication: SSH key only"
+  fi
 else
-  msg_ok "Configured SSH authentication: SSH key only"
+  if ! command -v virt-customize >/dev/null 2>&1; then
+    msg_info "Installing libguestfs-tools"
+    apt-get update >/dev/null 2>&1
+    apt-get install -y libguestfs-tools >/dev/null 2>&1
+    msg_ok "Installed libguestfs-tools"
+  fi
+
+  msg_info "Configuring console auto-login"
+  configure_cloud_init_console_autologin "$FILE"
+  msg_ok "Configured console auto-login"
 fi
 
 STORAGE_TYPE=$(pvesm status -storage $STORAGE | awk 'NR>1 {print $2}')
@@ -570,9 +586,11 @@ qm set $VMID \
   -scsi0 ${DISK1_REF},${DISK_CACHE}${THIN}size=${DISK_SIZE} \
   -boot order=scsi0 \
   -serial0 socket >/dev/null
-setup_cloud_init "$VMID" "$STORAGE" "$HN" "yes" "$CLOUDINIT_USER" \
-  "$CLOUDINIT_NETWORK_MODE" "${CLOUDINIT_IP:-}" "${CLOUDINIT_GW:-}" \
-  "${CLOUDINIT_DNS:-}" "${CLOUDINIT_PASSWORD:-}"
+if [ "$CLOUDINIT_ENABLE" = "yes" ]; then
+  setup_cloud_init "$VMID" "$STORAGE" "$HN" "yes" "$CLOUDINIT_USER" \
+    "$CLOUDINIT_NETWORK_MODE" "${CLOUDINIT_IP:-}" "${CLOUDINIT_GW:-}" \
+    "${CLOUDINIT_DNS:-}" "${CLOUDINIT_PASSWORD:-}"
+fi
 DESCRIPTION=$(
   cat <<EOF
 <div align='center'>
@@ -613,7 +631,11 @@ else
 fi
 
 msg_ok "Created a Ubuntu 24.04 VM ${CL}${BL}(${HN})"
-display_cloud_init_info "$VMID" "$HN" 2>/dev/null || true
+if [ "$CLOUDINIT_ENABLE" = "yes" ]; then
+  display_cloud_init_info "$VMID" "$HN" 2>/dev/null || true
+else
+  echo -e "${INFO}Console auto-login configured for root. Cloud-Init was not configured."
+fi
 if [ "$START_VM" == "yes" ]; then
   msg_info "Starting Ubuntu 24.04 VM"
   qm start $VMID
@@ -621,8 +643,14 @@ if [ "$START_VM" == "yes" ]; then
 fi
 post_update_to_api "done" "none"
 msg_ok "Completed successfully!\n"
-echo -e "Cloud-Init configured for user ${CLOUDINIT_USER}.\n
+if [ "$CLOUDINIT_ENABLE" = "yes" ]; then
+  echo -e "Cloud-Init configured for user ${CLOUDINIT_USER}.\n
 SSH key authentication: $([ -n "${CLOUDINIT_SSH_KEYS:-}" ] && echo configured || echo not configured)\n
 SSH password authentication: $([ "${CLOUDINIT_SSH_PWAUTH:-yes}" = "yes" ] && echo enabled || echo disabled)\n
 Console password: $([ -n "${CLOUDINIT_PASSWORD:-}" ] && echo configured || echo not configured)\n
 More info at https://github.com/community-scripts/ProxmoxVE/discussions/272 \n"
+else
+  echo -e "Cloud-Init was not configured.\n
+Console auto-login is enabled for root.\n
+More info at https://github.com/community-scripts/ProxmoxVE/discussions/272 \n"
+fi

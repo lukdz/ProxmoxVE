@@ -470,6 +470,27 @@ function configure_cloud_init_image_ssh_pwauth() {
     >/dev/null 2>&1
 }
 
+function configure_cloud_init_console_autologin() {
+  local image="$1"
+
+  if ! command -v virt-customize >/dev/null 2>&1; then
+    _ci_msg_error "virt-customize is required to configure console auto-login"
+    return 127
+  fi
+
+  virt-customize -q -a "$image" --run-command 'mkdir -p /etc/systemd/system/serial-getty@ttyS0.service.d /etc/systemd/system/getty@tty1.service.d && cat > /etc/systemd/system/serial-getty@ttyS0.service.d/autologin.conf << "EOF"
+[Service]
+ExecStart=
+ExecStart=-/sbin/agetty --autologin root --noclear %I $TERM
+EOF
+cat > /etc/systemd/system/getty@tty1.service.d/autologin.conf << "EOF"
+[Service]
+ExecStart=
+ExecStart=-/sbin/agetty --autologin root --noclear %I $TERM
+EOF' \
+    >/dev/null 2>&1
+}
+
 function cleanup_cloudinit_ssh_keys() {
   if [ -n "${CLOUDINIT_SSH_KEYS_TEMP:-}" ]; then
     rm -f "$CLOUDINIT_SSH_KEYS_TEMP" 2>/dev/null || true
@@ -959,6 +980,7 @@ export -f configure_cloud_init_default 2>/dev/null || true
 export -f configure_cloudinit_ssh_keys_default 2>/dev/null || true
 export -f configure_cloud_init_credentials 2>/dev/null || true
 export -f configure_cloud_init_image_ssh_pwauth 2>/dev/null || true
+export -f configure_cloud_init_console_autologin 2>/dev/null || true
 export -f cleanup_cloudinit_ssh_keys 2>/dev/null || true
 export -f cleanup_cloud_init_temp_files 2>/dev/null || true
 export -f configure_cloud_init_interactive 2>/dev/null || true

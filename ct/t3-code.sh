@@ -10,7 +10,7 @@ source "$_cs_boot" 2>/dev/null || source <(curl -fsSL "${COMMUNITY_SCRIPTS_CORE_
 # Source: https://t3.codes/ | Github: https://github.com/pingdotgg/t3code
 
 APP="T3-Code"
-var_tags="${var_tags:-ai;coding;development}"
+var_tags="${var_tags:-ai;coding}"
 var_cpu="${var_cpu:-4}"
 var_ram="${var_ram:-4096}"
 var_disk="${var_disk:-20}"
@@ -58,12 +58,14 @@ t3_provider_menu() {
   export var_t3_providers
 }
 
-# The shared engine owns the Advanced wizard, so append the app-specific prompt
-# when that wizard returns instead of asking before the main setup menu.
-eval "$(declare -f advanced_settings | sed 's/^advanced_settings ()/_t3_advanced_settings ()/')"
+# The shared engine owns the Advanced wizard. Insert the app-specific prompt
+# after the final settings step, before its confirmation dialog.
+eval "$(declare -f advanced_settings |
+  sed 's/^advanced_settings ()/_t3_advanced_settings ()/' |
+  sed '/^[[:space:]]*local ct_type_desc=/i\
+      t3_provider_menu')"
 advanced_settings() {
   _t3_advanced_settings "$@"
-  t3_provider_menu
 }
 
 t3_exec() {

@@ -36,7 +36,7 @@
       "type": "info"
     },
     {
-      "text": "After installation, run su - t3 and then npx --yes t3@latest pair to create a one-time pairing link. Treat pairing links as passwords.",
+      "text": "A one-time pairing URL with a one-hour lifetime is generated and printed at the end of installation. Generate another one inside the container with npx --yes t3@latest pair --base-dir /home/t3/.t3 --ttl 1h. Treat pairing links as passwords.",
       "type": "info"
     },
     {

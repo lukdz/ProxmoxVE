@@ -148,6 +148,19 @@ cat <<EOF >/root/.t3-code
 ${t3_version}
 EOF
 
+msg_info "Generating Pairing URL"
+t3_pair_output=""
+for _ in {1..30}; do
+  if t3_pair_output=$(STD="" t3_exec /usr/bin/npx --yes "t3@${t3_version}" pair --base-dir "$t3_home/.t3" --ttl 1h 2>/dev/null); then
+    printf '%s\n' "$t3_pair_output"
+    break
+  fi
+  sleep 1
+done
+if [[ -z "$t3_pair_output" ]]; then
+  msg_warn "Could not generate a pairing URL automatically. Run this inside the container as the t3 user: npx --yes t3@${t3_version} pair --base-dir ${t3_home}/.t3 --ttl 1h"
+fi
+
 motd_ssh
 customize
 cleanup_lxc

@@ -527,7 +527,11 @@ fi
 
 msg_info "Configuring SSH password authentication"
 configure_cloud_init_image_ssh_pwauth "$FILE" "${CLOUDINIT_SSH_PWAUTH:-yes}"
-msg_ok "Configured SSH password authentication"
+if [ "${CLOUDINIT_SSH_PWAUTH:-yes}" = "yes" ]; then
+  msg_ok "Configured SSH authentication: password enabled"
+else
+  msg_ok "Configured SSH authentication: SSH key only"
+fi
 
 STORAGE_TYPE=$(pvesm status -storage $STORAGE | awk 'NR>1 {print $2}')
 case $STORAGE_TYPE in
@@ -619,5 +623,6 @@ post_update_to_api "done" "none"
 msg_ok "Completed successfully!\n"
 echo -e "Cloud-Init configured for user ${CLOUDINIT_USER}.\n
 SSH key authentication: $([ -n "${CLOUDINIT_SSH_KEYS:-}" ] && echo configured || echo not configured)\n
-Cloud-Init password: $([ -n "${CLOUDINIT_PASSWORD:-}" ] && echo configured || echo not configured)\n
+SSH password authentication: $([ "${CLOUDINIT_SSH_PWAUTH:-yes}" = "yes" ] && echo enabled || echo disabled)\n
+Console password: $([ -n "${CLOUDINIT_PASSWORD:-}" ] && echo configured || echo not configured)\n
 More info at https://github.com/community-scripts/ProxmoxVE/discussions/272 \n"

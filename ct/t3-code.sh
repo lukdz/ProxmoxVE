@@ -156,13 +156,12 @@ t3_append_summary() {
   t3_summary_version_control="$(t3_summary_list "${var_t3_version_control:-none}")"
   t3_summary_source_control="$(t3_summary_list "${var_t3_source_control:-none}")"
   t3_summary_providers="$(t3_summary_list "${var_t3_providers:-none}")"
-  summary="T3 Setup:
+  summary="${summary}
 
+Dependencies:
   Version Control: ${t3_summary_version_control}
   Source Control: ${t3_summary_source_control}
-  Agent CLIs: ${t3_summary_providers}
-
-${summary}"
+  Agent CLIs: ${t3_summary_providers}"
 }
 
 # The shared engine owns the Advanced wizard. Insert the app-specific prompt

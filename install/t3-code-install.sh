@@ -153,14 +153,15 @@ show_provider_login_commands() {
   [[ "${t3_providers_installed:-0}" -eq 1 ]] || return 0
 
   msg_info "Provider Authentication"
+  echo
   echo -e "${TAB}${YW}Selected provider CLIs are installed but not authenticated. Run these commands from the Proxmox host:${CL}"
   echo -e "${TAB}${YW}After authentication, enable Cursor, Grok and OpenCode in T3 Code Settings if you selected them.${CL}"
   echo -e "${TAB}${YW}Authentication commands may open a browser or require terminal input.${CL}"
-  provider_selected codex && echo -e "${TAB}${BGN}pct exec ${CTID} --tty 1 -- su - t3 -c 'codex login'${CL}"
-  provider_selected claude && echo -e "${TAB}${BGN}pct exec ${CTID} --tty 1 -- su - t3 -c 'claude auth login'${CL}"
-  provider_selected cursor && echo -e "${TAB}${BGN}pct exec ${CTID} --tty 1 -- su - t3 -c 'agent login'${CL}"
-  provider_selected grok && echo -e "${TAB}${BGN}pct exec ${CTID} --tty 1 -- su - t3 -c 'grok login'${CL}"
-  provider_selected opencode && echo -e "${TAB}${BGN}pct exec ${CTID} --tty 1 -- su - t3 -c 'opencode auth login'${CL}"
+  provider_selected codex && echo -e "${TAB}${BGN}pct exec ${CTID} -- su - t3 -c 'codex login'${CL}"
+  provider_selected claude && echo -e "${TAB}${BGN}pct exec ${CTID} -- su - t3 -c 'claude auth login'${CL}"
+  provider_selected cursor && echo -e "${TAB}${BGN}pct exec ${CTID} -- su - t3 -c 'agent login'${CL}"
+  provider_selected grok && echo -e "${TAB}${BGN}pct exec ${CTID} -- su - t3 -c 'grok login'${CL}"
+  provider_selected opencode && echo -e "${TAB}${BGN}pct exec ${CTID} -- su - t3 -c 'opencode auth login'${CL}"
   msg_ok "Provider Authentication Instructions"
 }
 

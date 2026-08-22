@@ -119,6 +119,35 @@ t3_source_control_menu() {
   export var_t3_source_control
 }
 
+t3_summary_list() {
+  local raw="${1:-}"
+  [[ -z "$raw" || "$raw" == "none" ]] && {
+    printf 'none'
+    return
+  }
+
+  local -a items=()
+  local item label separator=""
+  IFS=',' read -r -a items <<<"$raw"
+  for item in "${items[@]}"; do
+    case "$item" in
+    git) label="Git" ;;
+    github) label="GitHub" ;;
+    gitlab) label="GitLab" ;;
+    azure) label="Azure DevOps" ;;
+    bitbucket) label="Bitbucket" ;;
+    codex) label="Codex" ;;
+    claude) label="Claude" ;;
+    cursor) label="Cursor" ;;
+    grok) label="Grok" ;;
+    opencode) label="OpenCode" ;;
+    *) label="$item" ;;
+    esac
+    printf '%s%s' "$separator" "$label"
+    separator=', '
+  done
+}
+
 # The shared engine owns the Advanced wizard. Insert the app-specific prompt
 # after the final settings step, before its confirmation dialog.
 eval "$(declare -f advanced_settings |
@@ -126,7 +155,13 @@ eval "$(declare -f advanced_settings |
   sed '/^[[:space:]]*local ct_type_desc=/i\
       t3_version_control_menu\
       t3_source_control_menu\
-      t3_provider_menu')"
+      t3_provider_menu' |
+  sed '/^[[:space:]]*if whiptail .*CONFIRM SETTINGS/i\
+      local t3_summary_version_control="$(t3_summary_list "${var_t3_version_control:-none}")"\
+      local t3_summary_source_control="$(t3_summary_list "${var_t3_source_control:-none}")"\
+      local t3_summary_providers="$(t3_summary_list "${var_t3_providers:-none}")"\
+      summary+="\n\nT3 Setup:\n  Version Control: ${t3_summary_version_control}\n  Source Control: ${t3_summary_source_control}\n  Agent CLIs: ${t3_summary_providers}"\
+')"
 advanced_settings() {
   _t3_advanced_settings "$@"
 }

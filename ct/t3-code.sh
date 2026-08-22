@@ -27,27 +27,44 @@ variables
 color
 catch_errors
 
-if [[ -z "${var_t3_providers:-}" && -z "${mode:-}" && -z "${1:-}" && "${PHS_SILENT:-0}" != "1" ]] && command -v pveversion >/dev/null 2>&1; then
-  ensure_whiptail
-  var_t3_providers=$(whiptail \
-    --backtitle "Proxmox VE Helper Scripts" \
-    --title "T3 Code Providers" \
-    --ok-button "Continue" \
-    --cancel-button "Skip Providers" \
-    --separate-output \
-    --checklist "\nSelect provider CLIs to install for the t3 user.\n\nUse Space to toggle and Enter to continue.\nNo providers are selected by default. Authentication is not performed." \
-    20 86 5 \
-    codex "OpenAI Codex CLI" off \
-    claude "Claude Code CLI" off \
-    cursor "Cursor Agent CLI" off \
-    grok "Grok Build CLI" off \
-    opencode "OpenCode CLI" off \
-    3>&1 1>&2 2>&3) || var_t3_providers=""
-fi
-var_t3_providers="${var_t3_providers//$'\n'/,}"
-var_t3_providers="${var_t3_providers//[[:space:]]/}"
-var_t3_providers="${var_t3_providers%,}"
-export var_t3_providers
+t3_provider_menu() {
+  if [[ "${PHS_SILENT:-0}" == "1" || -n "${var_t3_providers:-}" ]]; then
+    var_t3_providers="${var_t3_providers//[[:space:]]/}"
+    export var_t3_providers
+    return
+  fi
+
+  if command -v pveversion >/dev/null 2>&1; then
+    ensure_whiptail
+    var_t3_providers=$(whiptail \
+      --backtitle "Proxmox VE Helper Scripts" \
+      --title "T3 Code Providers" \
+      --ok-button "Continue" \
+      --cancel-button "Skip Providers" \
+      --separate-output \
+      --checklist "\nSelect provider CLIs to install for the t3 user.\n\nUse Space to toggle and Enter to continue.\nNo providers are selected by default. Authentication is not performed." \
+      20 86 5 \
+      codex "OpenAI Codex CLI" off \
+      claude "Claude Code CLI" off \
+      cursor "Cursor Agent CLI" off \
+      grok "Grok Build CLI" off \
+      opencode "OpenCode CLI" off \
+      3>&1 1>&2 2>&3) || var_t3_providers=""
+  fi
+
+  var_t3_providers="${var_t3_providers//$'\n'/,}"
+  var_t3_providers="${var_t3_providers//[[:space:]]/}"
+  var_t3_providers="${var_t3_providers%,}"
+  export var_t3_providers
+}
+
+# The shared engine owns the Advanced wizard, so append the app-specific prompt
+# when that wizard returns instead of asking before the main setup menu.
+eval "$(declare -f advanced_settings | sed 's/^advanced_settings ()/_t3_advanced_settings ()/')"
+advanced_settings() {
+  _t3_advanced_settings "$@"
+  t3_provider_menu
+}
 
 t3_exec() {
   $STD runuser --user "$t3_user" -- env \

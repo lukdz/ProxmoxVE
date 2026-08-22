@@ -32,7 +32,7 @@
       "label": "Provider CLIs",
       "type": "text",
       "default": "",
-      "help": "Optional comma-separated values: codex, claude, cursor, grok, opencode. Interactive installs show a multi-select menu with none selected by default. Authentication is always manual."
+      "help": "Optional comma-separated values: codex, claude, cursor, grok, opencode. Advanced installs show a multi-select menu with none selected by default. Authentication is always manual."
     }
   ],
   "default_credentials": {
@@ -45,7 +45,7 @@
       "type": "info"
     },
     {
-      "text": "During installation, optionally select provider CLIs from the multi-select menu. All providers are unselected by default. Selected CLIs are installed for the t3 user but are not authenticated automatically; the required pct exec commands are printed after installation.",
+      "text": "During Advanced setup, optionally select provider CLIs from the multi-select menu. All providers are unselected by default. Selected CLIs are installed for the t3 user but are not authenticated automatically; the required pct exec commands are printed after installation.",
       "type": "info"
     },
     {

@@ -231,8 +231,7 @@ function default_settings() {
   MTU=""
   START_VM="yes"
   METHOD="default"
-  configure_cloud_init_interactive "ubuntu" "yes" || exit-script
-  [ "$CLOUDINIT_ENABLE" = "yes" ] || exit-script
+  configure_cloud_init_default "ubuntu"
   echo -e "${CONTAINERID}${BOLD}${DGN}Virtual Machine ID: ${BGN}${VMID}${CL}"
   echo -e "${CONTAINERTYPE}${BOLD}${DGN}Machine Type: ${BGN}i440fx${CL}"
   echo -e "${DISKSIZE}${BOLD}${DGN}Disk Size: ${BGN}${DISK_SIZE}${CL}"
@@ -440,8 +439,12 @@ function advanced_settings() {
     fi
   done
 
-  configure_cloud_init_interactive "ubuntu" "yes" || exit-script
-  [ "$CLOUDINIT_ENABLE" = "yes" ] || exit-script
+  if (whiptail --backtitle "Proxmox VE Helper Scripts" --title "CLOUD-INIT" \
+    --yesno "Configure the VM with Cloud-Init?" 10 58); then
+    configure_cloud_init_interactive "ubuntu" "yes" || exit-script
+  else
+    exit-script
+  fi
 
   if (whiptail --backtitle "Proxmox VE Helper Scripts" --title "START VIRTUAL MACHINE" --yesno "Start VM when completed?" 10 58); then
     echo -e "${GATEWAY}${BOLD}${DGN}Start VM when completed: ${BGN}yes${CL}"
@@ -514,6 +517,17 @@ curl -f#SL -o "$(basename "$URL")" "$URL"
 echo -en "\e[1A\e[0K"
 FILE=$(basename $URL)
 msg_ok "Downloaded ${CL}${BL}${FILE}${CL}"
+
+if ! command -v virt-customize >/dev/null 2>&1; then
+  msg_info "Installing libguestfs-tools"
+  apt-get update >/dev/null 2>&1
+  apt-get install -y libguestfs-tools >/dev/null 2>&1
+  msg_ok "Installed libguestfs-tools"
+fi
+
+msg_info "Configuring SSH password authentication"
+configure_cloud_init_image_ssh_pwauth "$FILE" "${CLOUDINIT_SSH_PWAUTH:-yes}"
+msg_ok "Configured SSH password authentication"
 
 STORAGE_TYPE=$(pvesm status -storage $STORAGE | awk 'NR>1 {print $2}')
 case $STORAGE_TYPE in

@@ -91,6 +91,30 @@ function _ci_validate_username() {
   [[ "$user" =~ ^[a-z_][a-z0-9_-]*$ ]] && [[ "${#user}" -le 32 ]]
 }
 
+function _ci_discover_host_keys_file() {
+  local discovered_file="${CLOUDINIT_TMP_DIR:-/tmp}/cloud-init-host-sshkeys"
+  local key_file
+  local key
+
+  : >"$discovered_file"
+  for key_file in /root/.ssh/authorized_keys /root/.ssh/authorized_keys2 /root/.ssh/*.pub; do
+    [[ -f "$key_file" && -r "$key_file" ]] || continue
+    while IFS= read -r key || [[ -n "$key" ]]; do
+      key="${key%$'\r'}"
+      [[ -z "${key//[[:space:]]/}" || "$key" == \#* ]] && continue
+      printf '%s\n' "$key" >>"$discovered_file"
+    done <"$key_file"
+  done
+
+  if [[ -s "$discovered_file" ]] && _ci_validate_ssh_key_file "$discovered_file"; then
+    _ci_normalize_ssh_key_file "$discovered_file"
+    printf '%s\n' "$discovered_file"
+    return 0
+  fi
+  rm -f "$discovered_file"
+  return 1
+}
+
 # ------------------------------------------------------------------------------
 # _ci_ssh_discover_files - Scans standard paths for SSH keys
 # ------------------------------------------------------------------------------
@@ -335,6 +359,47 @@ function configure_cloudinit_ssh_keys() {
   return 0
 }
 
+function configure_cloudinit_ssh_keys_default() {
+  local host_key_file
+
+  if host_key_file=$(_ci_discover_host_keys_file); then
+    CLOUDINIT_SSH_KEYS="$host_key_file"
+    CLOUDINIT_SSH_KEYS_TEMP="$host_key_file"
+    echo -e "${ROOTSSH:-  🔑  }${BOLD}${DGN}SSH Keys: ${BGN}host keys selected${CL}"
+    return 0
+  fi
+
+  CLOUDINIT_SSH_KEYS=""
+  echo -e "${ROOTSSH:-  🔑  }${BOLD}${DGN}SSH Keys: ${BGN}none found${CL}"
+  return 1
+}
+
+function configure_cloud_init_default() {
+  local default_user="${1:-ubuntu}"
+
+  CLOUDINIT_ENABLE="yes"
+  CLOUDINIT_USER="$default_user"
+  CLOUDINIT_NETWORK_MODE="dhcp"
+  CLOUDINIT_IP=""
+  CLOUDINIT_GW=""
+  CLOUDINIT_DNS=""
+  CLOUDINIT_PASSWORD=$(openssl rand -base64 16)
+
+  if configure_cloudinit_ssh_keys_default; then
+    echo -e "${CLOUD:-  ☁️  }${BOLD}${DGN}Cloud-Init access: ${BGN}${CLOUDINIT_USER} with host SSH keys (console password generated)${CL}"
+  else
+    echo -e "${CLOUD:-  ☁️  }${BOLD}${DGN}Cloud-Init access: ${BGN}${CLOUDINIT_USER} with generated password${CL}"
+  fi
+
+  if [ -n "${CLOUDINIT_SSH_KEYS:-}" ]; then
+    CLOUDINIT_SSH_PWAUTH="no"
+  else
+    CLOUDINIT_SSH_PWAUTH="yes"
+  fi
+  export CLOUDINIT_ENABLE CLOUDINIT_USER CLOUDINIT_NETWORK_MODE CLOUDINIT_IP \
+    CLOUDINIT_GW CLOUDINIT_DNS CLOUDINIT_PASSWORD CLOUDINIT_SSH_PWAUTH
+}
+
 function configure_cloud_init_credentials() {
   local password_confirm
 
@@ -380,8 +445,29 @@ function configure_cloud_init_credentials() {
       --msgbox "Configure a password or an SSH public key so the VM can be accessed after its first boot." 10 70
   done
 
+  if [ -n "${CLOUDINIT_SSH_KEYS:-}" ]; then
+    CLOUDINIT_SSH_PWAUTH="no"
+  else
+    CLOUDINIT_SSH_PWAUTH="yes"
+  fi
+  export CLOUDINIT_SSH_PWAUTH
   export CLOUDINIT_PASSWORD
   return 0
+}
+
+function configure_cloud_init_image_ssh_pwauth() {
+  local image="$1"
+  local ssh_pwauth="${2:-no}"
+  local cloud_config="ssh_pwauth: ${ssh_pwauth}"
+
+  if ! command -v virt-customize >/dev/null 2>&1; then
+    _ci_msg_error "virt-customize is required to configure SSH password authentication"
+    return 127
+  fi
+
+  virt-customize -q -a "$image" --run-command \
+    "mkdir -p /etc/cloud/cloud.cfg.d && printf '%s\\n' '$cloud_config' > /etc/cloud/cloud.cfg.d/99-community-scripts-ssh-pwauth.cfg" \
+    >/dev/null 2>&1
 }
 
 function cleanup_cloudinit_ssh_keys() {
@@ -869,7 +955,10 @@ function wait_for_cloud_init() {
 # Export all functions for use in other scripts
 
 export -f setup_cloud_init 2>/dev/null || true
+export -f configure_cloud_init_default 2>/dev/null || true
+export -f configure_cloudinit_ssh_keys_default 2>/dev/null || true
 export -f configure_cloud_init_credentials 2>/dev/null || true
+export -f configure_cloud_init_image_ssh_pwauth 2>/dev/null || true
 export -f cleanup_cloudinit_ssh_keys 2>/dev/null || true
 export -f cleanup_cloud_init_temp_files 2>/dev/null || true
 export -f configure_cloud_init_interactive 2>/dev/null || true

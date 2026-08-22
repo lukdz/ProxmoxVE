@@ -340,7 +340,7 @@ function configure_cloud_init_credentials() {
 
   while true; do
     if CLOUDINIT_PASSWORD=$(whiptail --backtitle "Proxmox VE Helper Scripts" --passwordbox \
-      "Set a password for ${CLOUDINIT_USER}. Leave blank when using an SSH key." \
+      "Set a password for ${CLOUDINIT_USER}. A password is optional when an SSH key is configured in the next step." \
       10 70 --title "CLOUD-INIT PASSWORD" --cancel-button Exit-Script 3>&1 1>&2 2>&3); then
       if [ -n "$CLOUDINIT_PASSWORD" ]; then
         if password_confirm=$(whiptail --backtitle "Proxmox VE Helper Scripts" --passwordbox \

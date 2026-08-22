@@ -396,10 +396,6 @@ function cleanup_cloudinit_ssh_keys() {
 
 function cleanup_cloud_init_temp_files() {
   cleanup_cloudinit_ssh_keys
-  if [ -n "${CLOUDINIT_CRED_FILE:-}" ]; then
-    rm -f "$CLOUDINIT_CRED_FILE" 2>/dev/null || true
-    unset CLOUDINIT_CRED_FILE
-  fi
 }
 
 # ==============================================================================
@@ -565,7 +561,7 @@ function setup_cloud_init() {
   qm set "$vmid" --ciupgrade 1 >/dev/null 2>&1 || true
 
   # Save credentials to file (with restrictive permissions)
-  local cred_file="${CLOUDINIT_TMP_DIR:-/tmp}/${hostname}-${vmid}-cloud-init-credentials.txt"
+  local cred_file="/tmp/${hostname}-${vmid}-cloud-init-credentials.txt"
   umask 077
   cat >"$cred_file" <<EOF
 ╔══════════════════════════════════════════════════════════════════╗

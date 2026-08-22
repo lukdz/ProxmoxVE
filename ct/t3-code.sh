@@ -58,11 +58,74 @@ t3_provider_menu() {
   export var_t3_providers
 }
 
+t3_version_control_menu() {
+  if [[ "${PHS_SILENT:-0}" == "1" || -n "${var_t3_version_control+x}" ]]; then
+    var_t3_version_control="${var_t3_version_control:-git}"
+    var_t3_version_control="${var_t3_version_control//[[:space:]]/}"
+    export var_t3_version_control
+    return
+  fi
+
+  if command -v pveversion >/dev/null 2>&1; then
+    ensure_whiptail
+    var_t3_version_control=$(whiptail \
+      --backtitle "Proxmox VE Helper Scripts" \
+      --title "T3 Code Version Control" \
+      --ok-button "Continue" \
+      --cancel-button "Skip Version Control" \
+      --separate-output \
+      --checklist "\nSelect version-control tools to install for the t3 user.\n\nUse Space to toggle and Enter to continue.\nGit is selected by default.\n\nJujutsu: Coming Soon" \
+      16 86 1 \
+      git "Git" on \
+      3>&1 1>&2 2>&3) || var_t3_version_control=""
+  fi
+
+  var_t3_version_control="${var_t3_version_control//$'\n'/,}"
+  var_t3_version_control="${var_t3_version_control//[[:space:]]/}"
+  var_t3_version_control="${var_t3_version_control%,}"
+  [[ -z "$var_t3_version_control" ]] && var_t3_version_control="none"
+  export var_t3_version_control
+}
+
+t3_source_control_menu() {
+  if [[ "${PHS_SILENT:-0}" == "1" || -n "${var_t3_source_control+x}" ]]; then
+    var_t3_source_control="${var_t3_source_control:-none}"
+    var_t3_source_control="${var_t3_source_control//[[:space:]]/}"
+    export var_t3_source_control
+    return
+  fi
+
+  if command -v pveversion >/dev/null 2>&1; then
+    ensure_whiptail
+    var_t3_source_control=$(whiptail \
+      --backtitle "Proxmox VE Helper Scripts" \
+      --title "T3 Code Source Control Providers" \
+      --ok-button "Continue" \
+      --cancel-button "Skip Source Control" \
+      --separate-output \
+      --checklist "\nSelect source-control integrations to install or configure for the t3 user.\n\nUse Space to toggle and Enter to continue.\nNo integrations are selected by default.\n\nGitHub: installs the gh CLI.\nGitLab: installs the glab CLI.\nAzure DevOps: installs az and its DevOps extension.\nBitbucket: uses API-token environment variables, not a CLI." \
+      20 86 4 \
+      github "Not available - install gh CLI" off \
+      gitlab "Not available - install glab CLI" off \
+      azure "Not available - install az + DevOps extension" off \
+      bitbucket "Not authenticated - configure API token" off \
+      3>&1 1>&2 2>&3) || var_t3_source_control=""
+  fi
+
+  var_t3_source_control="${var_t3_source_control//$'\n'/,}"
+  var_t3_source_control="${var_t3_source_control//[[:space:]]/}"
+  var_t3_source_control="${var_t3_source_control%,}"
+  [[ -z "$var_t3_source_control" ]] && var_t3_source_control="none"
+  export var_t3_source_control
+}
+
 # The shared engine owns the Advanced wizard. Insert the app-specific prompt
 # after the final settings step, before its confirmation dialog.
 eval "$(declare -f advanced_settings |
   sed 's/^advanced_settings ()/_t3_advanced_settings ()/' |
   sed '/^[[:space:]]*local ct_type_desc=/i\
+      t3_version_control_menu\
+      t3_source_control_menu\
       t3_provider_menu')"
 advanced_settings() {
   _t3_advanced_settings "$@"
@@ -179,4 +242,4 @@ echo -e "${GATEWAY}${BGN}http://${IP}:3773${CL}"
 echo -e "${INFO}${YW}A one-time pairing URL with a one-hour lifetime is printed during installation.${CL}"
 echo -e "${INFO}${YW}To generate another one inside the container as the t3 user:${CL}"
 echo -e "${TAB}${BGN}npx --yes t3@latest pair --base-dir /home/t3/.t3 --ttl 1h${CL}"
-echo -e "${INFO}${YW}If providers were selected, use the pct exec authentication commands printed during installation.${CL}"
+echo -e "${INFO}${YW}If providers or source-control integrations were selected, use the authentication commands printed during installation.${CL}"

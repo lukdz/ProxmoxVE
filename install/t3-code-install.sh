@@ -17,6 +17,10 @@ t3_user="t3"
 t3_home="/home/${t3_user}"
 var_t3_providers="${var_t3_providers:-}"
 var_t3_providers="${var_t3_providers//[[:space:]]/}"
+var_t3_version_control="${var_t3_version_control:-git}"
+var_t3_version_control="${var_t3_version_control//[[:space:]]/}"
+var_t3_source_control="${var_t3_source_control:-none}"
+var_t3_source_control="${var_t3_source_control//[[:space:]]/}"
 
 msg_info "Installing Dependencies"
 $STD apt install -y \
@@ -26,6 +30,12 @@ $STD apt install -y \
   dbus-user-session \
   libpam-systemd
 msg_ok "Installed Dependencies"
+
+if [[ ",${var_t3_version_control,,}," == *,git,* ]]; then
+  msg_info "Installing Git"
+  $STD apt install -y git
+  msg_ok "Installed Git"
+fi
 
 NODE_VERSION="24" setup_nodejs
 
@@ -149,6 +159,113 @@ install_selected_providers() {
   fi
 }
 
+source_control_selected() {
+  local provider="${1,,}"
+  local selected=",${var_t3_source_control,,},"
+  [[ "$selected" == *",${provider},"* ]]
+}
+
+install_gitlab_cli() {
+  local arch="$(dpkg --print-architecture)"
+  local release_url="https://gitlab.com/api/v4/projects/gitlab-org%2Fcli/releases/permalink/latest"
+  local package_url
+  package_url=$(curl -fsSL --retry 3 --retry-connrefused --connect-timeout 10 --max-time 30 "$release_url" |
+    jq -r --arg arch "$arch" '
+      (.tag_name | ltrimstr("v")) as $version |
+      .assets.links[] |
+      select(.name == ("glab_" + $version + "_linux_" + $arch + ".deb")) |
+      .url' | head -n 1)
+  [[ -n "$package_url" && "$package_url" != "null" ]] || {
+    msg_error "Could not find a GitLab CLI package for ${arch}."
+    return 1
+  }
+
+  local package_file
+  package_file=$(mktemp --suffix=.deb)
+  msg_info "Installing GitLab CLI"
+  if ! curl -fsSL --retry 3 --retry-connrefused --connect-timeout 10 --max-time 120 "$package_url" -o "$package_file"; then
+    rm -f "$package_file"
+    msg_error "Failed to download GitLab CLI."
+    return 1
+  fi
+  if ! $STD dpkg -i "$package_file"; then
+    $STD apt install -f -y
+  fi
+  rm -f "$package_file"
+  command -v glab >/dev/null 2>&1 || {
+    msg_error "GitLab CLI installation did not provide glab."
+    return 1
+  }
+  msg_ok "Installed GitLab CLI"
+}
+
+configure_bitbucket_environment() {
+  local env_dir="/etc/t3-code"
+  local env_file="${env_dir}/source-control.env"
+  mkdir -p "$env_dir"
+  if [[ ! -f "$env_file" ]]; then
+    cat <<'EOF' >"$env_file"
+# Bitbucket credentials for T3 Code. Set either the access token, or the
+# email/API-token pair, then restart the T3 Code user service.
+# T3CODE_BITBUCKET_ACCESS_TOKEN=
+# T3CODE_BITBUCKET_EMAIL=
+# T3CODE_BITBUCKET_API_TOKEN=
+EOF
+  fi
+  chown root:"$t3_user" "$env_file"
+  chmod 640 "$env_file"
+
+  mkdir -p "$t3_home/.config/systemd/user/t3code.service.d"
+  cat <<EOF >"$t3_home/.config/systemd/user/t3code.service.d/20-source-control.conf"
+[Service]
+EnvironmentFile=-${env_file}
+EOF
+  chown "$t3_user:$t3_user" \
+    "$t3_home/.config/systemd/user/t3code.service.d" \
+    "$t3_home/.config/systemd/user/t3code.service.d/20-source-control.conf"
+}
+
+install_source_control_tools() {
+  t3_source_control_configured=0
+  [[ -n "${var_t3_source_control:-}" && "${var_t3_source_control,,}" != "none" ]] || return 0
+
+  if source_control_selected github; then
+    setup_deb822_repo "github-cli" \
+      "https://cli.github.com/packages/githubcli-archive-keyring.gpg" \
+      "https://cli.github.com/packages" \
+      "stable" "main" "$(dpkg --print-architecture)"
+    msg_info "Installing GitHub CLI"
+    $STD apt install -y gh
+    msg_ok "Installed GitHub CLI"
+    t3_source_control_configured=1
+  fi
+
+  if source_control_selected gitlab; then
+    install_gitlab_cli
+    t3_source_control_configured=1
+  fi
+
+  if source_control_selected azure; then
+    setup_deb822_repo "azure-cli" \
+      "https://packages.microsoft.com/keys/microsoft-2025.asc" \
+      "https://packages.microsoft.com/repos/azure-cli/" \
+      "bookworm" "main" "$(dpkg --print-architecture)"
+    msg_info "Installing Azure CLI"
+    $STD apt install -y azure-cli
+    msg_ok "Installed Azure CLI"
+    msg_info "Installing Azure DevOps extension"
+    t3_exec /usr/bin/az extension add --name azure-devops
+    msg_ok "Installed Azure DevOps extension"
+    t3_source_control_configured=1
+  fi
+
+  if source_control_selected bitbucket; then
+    configure_bitbucket_environment
+    msg_ok "Prepared Bitbucket environment configuration"
+    t3_source_control_configured=1
+  fi
+}
+
 show_provider_login_commands() {
   [[ "${t3_providers_installed:-0}" -eq 1 ]] || return 0
 
@@ -163,6 +280,26 @@ show_provider_login_commands() {
   provider_selected grok && echo -e "${TAB}${BGN}pct exec ${CTID} -- su - t3 -c 'grok login'${CL}"
   provider_selected opencode && echo -e "${TAB}${BGN}pct exec ${CTID} -- su - t3 -c 'opencode auth login'${CL}"
   msg_ok "Provider Authentication Instructions"
+}
+
+show_source_control_login_commands() {
+  [[ "${t3_source_control_configured:-0}" -eq 1 ]] || return 0
+
+  msg_info "Source Control Authentication"
+  echo
+  echo -e "${TAB}${YW}Selected source-control integrations are installed or prepared but not authenticated. Run these commands from the Proxmox host:${CL}"
+  echo -e "${TAB}${YW}Authentication is performed as the t3 user and is never done automatically.${CL}"
+  source_control_selected github && echo -e "${TAB}${BGN}pct exec ${CTID} -- su - t3 -c 'gh auth login'${CL}"
+  source_control_selected gitlab && echo -e "${TAB}${BGN}pct exec ${CTID} -- su - t3 -c 'glab auth login'${CL}"
+  source_control_selected azure && echo -e "${TAB}${BGN}pct exec ${CTID} -- su - t3 -c 'az login'${CL}"
+  if source_control_selected bitbucket; then
+    echo -e "${TAB}${YW}Edit /etc/t3-code/source-control.env in CT ${CTID} and set either:${CL}"
+    echo -e "${TAB}${BGN}T3CODE_BITBUCKET_ACCESS_TOKEN=your-access-token${CL}"
+    echo -e "${TAB}${YW}or T3CODE_BITBUCKET_EMAIL and T3CODE_BITBUCKET_API_TOKEN.${CL}"
+    echo -e "${TAB}${YW}Then restart T3 Code:${CL}"
+    echo -e "${TAB}${BGN}pct exec ${CTID} -- su - t3 -c 'systemctl --user restart t3code.service'${CL}"
+  fi
+  msg_ok "Source Control Authentication Instructions"
 }
 
 finish_t3_service_setup() {
@@ -222,10 +359,11 @@ fi
 msg_ok "Configured Network Access"
 
 install_selected_providers
-if [[ "$t3_providers_installed" -eq 1 ]]; then
-  msg_info "Refreshing T3 Provider Status"
+install_source_control_tools
+if [[ "${t3_providers_installed:-0}" -eq 1 || "${t3_source_control_configured:-0}" -eq 1 ]]; then
+  msg_info "Refreshing T3 Integration Status"
   t3_exec /usr/bin/systemctl --user restart t3code.service
-  msg_ok "Refreshed T3 Provider Status"
+  msg_ok "Refreshed T3 Integration Status"
 fi
 
 t3_version=$(jq -r '.activeVersion // empty' "$t3_home/.t3/runtime/service-state.json" 2>/dev/null || true)
@@ -251,6 +389,7 @@ if [[ -z "$t3_pair_output" ]]; then
 fi
 
 show_provider_login_commands
+show_source_control_login_commands
 
 motd_ssh
 customize

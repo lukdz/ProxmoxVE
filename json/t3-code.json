@@ -33,6 +33,20 @@
       "type": "text",
       "default": "",
       "help": "Optional comma-separated values: codex, claude, cursor, grok, opencode. Advanced installs show a multi-select menu with none selected by default. Authentication is always manual."
+    },
+    {
+      "name": "var_t3_version_control",
+      "label": "Version Control",
+      "type": "text",
+      "default": "git",
+      "help": "Git is selected by default in Advanced setup. Jujutsu support is coming soon. Set to none to skip Git installation."
+    },
+    {
+      "name": "var_t3_source_control",
+      "label": "Source Control Providers",
+      "type": "text",
+      "default": "",
+      "help": "Optional comma-separated values: github, gitlab, azure, bitbucket. Advanced installs show a multi-select menu with none selected by default. Authentication is always manual; Bitbucket uses T3CODE_BITBUCKET_ACCESS_TOKEN or T3CODE_BITBUCKET_EMAIL and T3CODE_BITBUCKET_API_TOKEN."
     }
   ],
   "default_credentials": {
@@ -50,6 +64,10 @@
     },
     {
       "text": "After provider installation, the T3 Code provider health check may initially show an unauthenticated or disabled state. Authenticate selected providers with the pct exec commands printed by the installer, then refresh provider status in T3 Code. Cursor, Grok and OpenCode are disabled by default in T3 Code and must be enabled in Settings.",
+      "type": "info"
+    },
+    {
+      "text": "During Advanced setup, optionally select GitHub, GitLab, Azure DevOps, or Bitbucket under Source Control Providers. No source-control integrations are selected by default. GitHub installs gh, GitLab installs glab, Azure DevOps installs az with the azure-devops extension, and Bitbucket uses T3CODE_BITBUCKET_ACCESS_TOKEN or T3CODE_BITBUCKET_EMAIL and T3CODE_BITBUCKET_API_TOKEN. Authentication is always manual.",
       "type": "info"
     },
     {

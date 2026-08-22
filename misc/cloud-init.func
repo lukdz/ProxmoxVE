@@ -481,9 +481,15 @@ function setup_cloud_init() {
   local network_mode="${6:-dhcp}"
   local static_ip="${7:-}"
   local gateway="${8:-}"
-  local nameservers="${9:-$CLOUDINIT_DNS_SERVERS}"
+  local nameservers
   local cipassword
   local network_summary
+
+  if [ "$#" -ge 9 ]; then
+    nameservers="${9}"
+  else
+    nameservers="$CLOUDINIT_DNS_SERVERS"
+  fi
 
   # Skip if not enabled
   if [ "$enable" != "yes" ]; then
@@ -547,8 +553,10 @@ function setup_cloud_init() {
     network_summary="DHCP"
   fi
 
-  # Set DNS servers
-  qm set "$vmid" --nameserver "$nameservers" >/dev/null
+  # Only set DNS when explicitly configured. DHCP can then provide it.
+  if [ -n "$nameservers" ]; then
+    qm set "$vmid" --nameserver "$nameservers" >/dev/null
+  fi
 
   # Set search domain
   qm set "$vmid" --searchdomain "$CLOUDINIT_SEARCH_DOMAIN" >/dev/null
@@ -574,7 +582,7 @@ Username: ${ciuser}
 Password: ${cipassword:-not configured (SSH key authentication)}
 
 Network:  ${network_summary}
-DNS:      ${nameservers}
+DNS:      ${nameservers:-provided by DHCP}
 
 ────────────────────────────────────────
 SSH Access (if keys configured):
@@ -709,12 +717,16 @@ function configure_cloud_init_interactive() {
     fi
   fi
 
-  # DNS Servers
-  if CLOUDINIT_DNS=$(whiptail --backtitle "Proxmox VE Helper Scripts" --inputbox \
-    "DNS Servers (space-separated)" 8 58 "1.1.1.1 8.8.8.8" --title "DNS SERVERS" 3>&1 1>&2 2>&3); then
-    export CLOUDINIT_DNS="${CLOUDINIT_DNS:-1.1.1.1 8.8.8.8}"
+  # DHCP provides DNS automatically; only ask for DNS with static networking.
+  if [ "$CLOUDINIT_NETWORK_MODE" = "static" ]; then
+    if CLOUDINIT_DNS=$(whiptail --backtitle "Proxmox VE Helper Scripts" --inputbox \
+      "DNS Servers (space-separated)" 8 58 "1.1.1.1 8.8.8.8" --title "DNS SERVERS" 3>&1 1>&2 2>&3); then
+      export CLOUDINIT_DNS="${CLOUDINIT_DNS:-1.1.1.1 8.8.8.8}"
+    else
+      export CLOUDINIT_DNS="1.1.1.1 8.8.8.8"
+    fi
   else
-    export CLOUDINIT_DNS="1.1.1.1 8.8.8.8"
+    export CLOUDINIT_DNS=""
   fi
 
   if [ "$required" = "yes" ]; then

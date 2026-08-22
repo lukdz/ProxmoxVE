@@ -298,8 +298,8 @@ show_source_control_login_commands() {
   source_control_selected azure && echo -e "${TAB}${BGN}pct exec ${CTID} -- su - t3 -c 'az login'${CL}"
   if source_control_selected bitbucket; then
     echo -e "${TAB}${YW}Edit /etc/t3-code/source-control.env in CT ${CTID} and set either:${CL}"
-    echo -e "${TAB}${BGN}T3CODE_BITBUCKET_ACCESS_TOKEN=your-access-token${CL}"
-    echo -e "${TAB}${BGN}or T3CODE_BITBUCKET_EMAIL and T3CODE_BITBUCKET_API_TOKEN.${CL}"
+    echo -e "${TAB}${YW}T3CODE_BITBUCKET_ACCESS_TOKEN=your-access-token${CL}"
+    echo -e "${TAB}${YW}or T3CODE_BITBUCKET_EMAIL and T3CODE_BITBUCKET_API_TOKEN.${CL}"
     echo -e "${TAB}${YW}Then restart T3 Code:${CL}"
     echo -e "${TAB}${BGN}pct exec ${CTID} -- su - t3 -c 'systemctl --user restart t3code.service'${CL}"
   fi

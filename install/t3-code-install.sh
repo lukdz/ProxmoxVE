@@ -15,6 +15,8 @@ update_os
 
 t3_user="t3"
 t3_home="/home/${t3_user}"
+var_t3_providers="${var_t3_providers:-}"
+var_t3_providers="${var_t3_providers//[[:space:]]/}"
 
 msg_info "Installing Dependencies"
 $STD apt install -y \
@@ -37,6 +39,16 @@ $STD chmod 750 "$t3_home"
 if ! grep -q '^export XDG_RUNTIME_DIR=' "$t3_home/.profile" 2>/dev/null; then
   cat <<'EOF' >>"$t3_home/.profile"
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+EOF
+fi
+if ! grep -q '^export PATH=' "$t3_home/.profile" 2>/dev/null; then
+  cat <<'EOF' >>"$t3_home/.profile"
+export PATH="$HOME/.local/bin:$PATH"
+EOF
+fi
+if ! grep -q '^export NPM_CONFIG_PREFIX=' "$t3_home/.profile" 2>/dev/null; then
+  cat <<'EOF' >>"$t3_home/.profile"
+export NPM_CONFIG_PREFIX="$HOME/.local"
 EOF
 fi
 chown "$t3_user:$t3_user" "$t3_home/.profile"
@@ -68,6 +80,7 @@ t3_exec() {
     PATH="$t3_home/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
     XDG_RUNTIME_DIR="/run/user/${t3_uid}" \
     DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${t3_uid}/bus" \
+    NPM_CONFIG_PREFIX="$t3_home/.local" \
     NPM_CONFIG_CACHE="$t3_home/.cache/npm" \
     "$@"
 }
@@ -82,6 +95,73 @@ fix_resource_monitor_permissions() {
       t3_resource_monitor_repaired=1
     fi
   done
+}
+
+provider_selected() {
+  local provider="${1,,}"
+  local selected=",${var_t3_providers,,},"
+  [[ "$selected" == *",${provider},"* ]]
+}
+
+install_npm_provider() {
+  local label="$1"
+  local package="$2"
+  msg_info "Installing ${label}"
+  t3_exec /usr/bin/npm install --global --prefix "$t3_home/.local" \
+    --allow-scripts="$package" "${package}@latest"
+  msg_ok "Installed ${label}"
+}
+
+install_selected_providers() {
+  t3_providers_installed=0
+  [[ -n "${var_t3_providers:-}" && "${var_t3_providers,,}" != "none" ]] || return 0
+
+  if provider_selected codex; then
+    install_npm_provider "Codex CLI" "@openai/codex"
+    t3_providers_installed=1
+  fi
+
+  if provider_selected claude; then
+    setup_deb822_repo "claude-code" \
+      "https://downloads.claude.ai/keys/claude-code.asc" \
+      "https://downloads.claude.ai/claude-code/apt/stable" \
+      "stable" "main"
+    msg_info "Installing Claude Code CLI"
+    $STD apt install -y claude-code
+    msg_ok "Installed Claude Code CLI"
+    t3_providers_installed=1
+  fi
+
+  if provider_selected cursor; then
+    msg_info "Installing Cursor Agent CLI"
+    t3_exec /bin/bash -c 'set -o pipefail; curl -fsSL https://cursor.com/install | bash'
+    msg_ok "Installed Cursor Agent CLI"
+    t3_providers_installed=1
+  fi
+
+  if provider_selected grok; then
+    install_npm_provider "Grok Build CLI" "@xai-official/grok"
+    t3_providers_installed=1
+  fi
+  if provider_selected opencode; then
+    install_npm_provider "OpenCode CLI" "opencode-ai"
+    t3_providers_installed=1
+  fi
+}
+
+show_provider_login_commands() {
+  [[ "${t3_providers_installed:-0}" -eq 1 ]] || return 0
+
+  msg_info "Provider Authentication"
+  echo -e "${TAB}${YW}Selected provider CLIs are installed but not authenticated. Run these commands from the Proxmox host:${CL}"
+  echo -e "${TAB}${YW}After authentication, enable Cursor, Grok and OpenCode in T3 Code Settings if you selected them.${CL}"
+  echo -e "${TAB}${YW}Authentication commands may open a browser or require terminal input.${CL}"
+  provider_selected codex && echo -e "${TAB}${BGN}pct exec ${CTID} --tty 1 -- su - t3 -c 'codex login'${CL}"
+  provider_selected claude && echo -e "${TAB}${BGN}pct exec ${CTID} --tty 1 -- su - t3 -c 'claude auth login'${CL}"
+  provider_selected cursor && echo -e "${TAB}${BGN}pct exec ${CTID} --tty 1 -- su - t3 -c 'agent login'${CL}"
+  provider_selected grok && echo -e "${TAB}${BGN}pct exec ${CTID} --tty 1 -- su - t3 -c 'grok login'${CL}"
+  provider_selected opencode && echo -e "${TAB}${BGN}pct exec ${CTID} --tty 1 -- su - t3 -c 'opencode auth login'${CL}"
+  msg_ok "Provider Authentication Instructions"
 }
 
 finish_t3_service_setup() {
@@ -125,6 +205,7 @@ cat <<EOF >"$t3_home/.config/systemd/user/t3code.service.d/10-network.conf"
 [Service]
 Environment=HOME=${t3_home}
 Environment=PATH=${t3_home}/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=NPM_CONFIG_PREFIX=${t3_home}/.local
 Environment=T3CODE_HOST=0.0.0.0
 Environment=T3CODE_PORT=3773
 EOF
@@ -138,6 +219,13 @@ if ! t3_exec /usr/bin/systemctl --user is-active --quiet t3code.service; then
   exit 1
 fi
 msg_ok "Configured Network Access"
+
+install_selected_providers
+if [[ "$t3_providers_installed" -eq 1 ]]; then
+  msg_info "Refreshing T3 Provider Status"
+  t3_exec /usr/bin/systemctl --user restart t3code.service
+  msg_ok "Refreshed T3 Provider Status"
+fi
 
 t3_version=$(jq -r '.activeVersion // empty' "$t3_home/.t3/runtime/service-state.json" 2>/dev/null || true)
 if [[ ! "$t3_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -160,6 +248,8 @@ done
 if [[ -z "$t3_pair_output" ]]; then
   msg_warn "Could not generate a pairing URL automatically. Run this inside the container as the t3 user: npx --yes t3@${t3_version} pair --base-dir ${t3_home}/.t3 --ttl 1h"
 fi
+
+show_provider_login_commands
 
 motd_ssh
 customize

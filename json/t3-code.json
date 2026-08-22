@@ -26,13 +26,30 @@
       }
     }
   ],
+  "app_vars": [
+    {
+      "name": "var_t3_providers",
+      "label": "Provider CLIs",
+      "type": "text",
+      "default": "",
+      "help": "Optional comma-separated values: codex, claude, cursor, grok, opencode. Interactive installs show a multi-select menu with none selected by default. Authentication is always manual."
+    }
+  ],
   "default_credentials": {
     "username": null,
     "password": null
   },
   "notes": [
     {
-      "text": "The service runs as the dedicated non-root t3 user. Add projects and install/authenticate provider CLIs as that user; this script does not copy credentials or install provider CLIs.",
+      "text": "The service runs as the dedicated non-root t3 user. Add projects and authenticate provider CLIs as that user; provider authentication is never performed automatically.",
+      "type": "info"
+    },
+    {
+      "text": "During installation, optionally select provider CLIs from the multi-select menu. All providers are unselected by default. Selected CLIs are installed for the t3 user but are not authenticated automatically; the required pct exec commands are printed after installation.",
+      "type": "info"
+    },
+    {
+      "text": "After provider installation, the T3 Code provider health check may initially show an unauthenticated or disabled state. Authenticate selected providers with the pct exec commands printed by the installer, then refresh provider status in T3 Code. Cursor, Grok and OpenCode are disabled by default in T3 Code and must be enabled in Settings.",
       "type": "info"
     },
     {

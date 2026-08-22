@@ -299,7 +299,7 @@ show_source_control_login_commands() {
   if source_control_selected bitbucket; then
     echo -e "${TAB}${YW}Edit /etc/t3-code/source-control.env in CT ${CTID} and set either:${CL}"
     echo -e "${TAB}${BGN}T3CODE_BITBUCKET_ACCESS_TOKEN=your-access-token${CL}"
-    echo -e "${TAB}${YW}or T3CODE_BITBUCKET_EMAIL and T3CODE_BITBUCKET_API_TOKEN.${CL}"
+    echo -e "${TAB}${BGN}or T3CODE_BITBUCKET_EMAIL and T3CODE_BITBUCKET_API_TOKEN.${CL}"
     echo -e "${TAB}${YW}Then restart T3 Code:${CL}"
     echo -e "${TAB}${BGN}pct exec ${CTID} -- su - t3 -c 'systemctl --user restart t3code.service'${CL}"
   fi
@@ -383,6 +383,9 @@ msg_info "Generating Pairing URL"
 t3_pair_output=""
 for _ in {1..30}; do
   if t3_pair_output=$(STD="" t3_exec /usr/bin/npx --yes "t3@${t3_version}" pair --base-dir "$t3_home/.t3" --ttl 1h 2>/dev/null); then
+    stop_spinner
+    clear_line
+    echo -e "${INFO}${YW}Generating Pairing URL${CL}"
     printf '%s\n' "$t3_pair_output"
     break
   fi

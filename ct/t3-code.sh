@@ -161,6 +161,7 @@ t3_append_summary() {
   Version Control: ${t3_summary_version_control}
   Source Control: ${t3_summary_source_control}
   Agent CLIs: ${t3_summary_providers}
+
 ${summary}"
 }
 

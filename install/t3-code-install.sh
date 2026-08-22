@@ -84,8 +84,35 @@ fix_resource_monitor_permissions() {
   done
 }
 
+finish_t3_service_setup() {
+  local expected_version="${1:-}"
+  local installed_version
+
+  $STD loginctl enable-linger "$t3_user"
+  if [[ ! -f "$t3_home/.config/systemd/user/t3code.service" ||
+    ! -f "$t3_home/.t3/runtime/service-launcher.mjs" ||
+    ! -f "$t3_home/.t3/runtime/service-state.json" ]]; then
+    return 1
+  fi
+
+  installed_version=$(jq -r '.activeVersion // empty' "$t3_home/.t3/runtime/service-state.json" 2>/dev/null || true)
+  [[ "$installed_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+  [[ -z "$expected_version" || "$installed_version" == "$expected_version" ]] || return 1
+  [[ -f "$t3_home/.t3/runtime/versions/${installed_version}/node_modules/t3/dist/bin.mjs" ]] || return 1
+  [[ -f "$t3_home/.t3/runtime/versions/${installed_version}/.install-complete" ]] || return 1
+
+  t3_exec /usr/bin/systemctl --user daemon-reload
+  t3_exec /usr/bin/systemctl --user enable t3code.service
+}
+
 msg_info "Installing T3 Code"
-t3_exec /usr/bin/npx --yes t3@latest service install
+if ! t3_exec /usr/bin/npx --yes t3@latest service install; then
+  msg_warn "T3 could not enable lingering from the unprivileged user; completing service setup as root."
+  if ! finish_t3_service_setup; then
+    msg_error "T3 Code service installation failed"
+    exit 1
+  fi
+fi
 msg_ok "Installed T3 Code"
 fix_resource_monitor_permissions
 if [[ "$t3_resource_monitor_repaired" -eq 1 ]]; then
